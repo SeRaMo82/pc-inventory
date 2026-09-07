@@ -16,7 +16,60 @@ function closeOnBackdrop(e,id){if(e.target.id===id)document.getElementById(id).c
 function closeTopModal(){const ids=['login-modal','item-modal','config-modal','admin-modal','admin-editor-modal','logs-modal'];for(const id of ids){const el=document.getElementById(id);if(el&&!el.classList.contains('hidden')){el.classList.add('hidden');return}}}
 function openLoginModal(){if(session){signOut();return}document.getElementById('login-modal').classList.remove('hidden');setTimeout(()=>document.getElementById('admin-username-input').focus(),50)}
 function closeLoginModal(){document.getElementById('login-modal').classList.add('hidden');document.getElementById('admin-username-input').value='';document.getElementById('admin-pass-input').value=''}
-async function handleAdminLogin(e){e.preventDefault();const btn=document.getElementById('login-btn');const username=document.getElementById('admin-username-input').value.trim().toLowerCase();const password=document.getElementById('admin-pass-input').value;btn.disabled=true;btn.textContent='در حال ورود...';try{const {data:p,error:pe}=await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('username',username).maybeSingle();if(pe)throw pe;if(!p||p.active===false){toast('نام کاربری یا رمز عبور نادرست است.','error');return}const {data,error}=await sb.auth.signInWithPassword({email:p.login_email,password});if(error)throw error;session=data.session;profile=p;applyAuth();closeLoginModal();await trackPresence();toast(`خوش آمدید ${p.display_name||p.username}`,'success')}catch(err){console.error(err);toast('ورود ناموفق بود؛ نام کاربری یا رمز عبور را بررسی کنید.','error')}finally{btn.disabled=false;btn.textContent='ورود'}}
+async function handleLogin(e) {
+  if (e) e.preventDefault();
+  
+  const usernameInput = document.getElementById('login-username').value.trim();
+  const passwordInput = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+
+  // ۱. تبدیل نام کاربری به ایمیل معتبر جهت ارسال به Supabase
+  let emailToSend = usernameInput;
+  if (!usernameInput.includes('@')) {
+    emailToSend = `${usernameInput}@pc-inventory.local`;
+  }
+
+  try {
+    // ۲. احراز هویت با Supabase Auth
+    const { data, error } = await _supabase.auth.signInWithPassword({
+      email: emailToSend,
+      password: passwordInput,
+    });
+
+    if (error) {
+      console.error("Auth Error:", error.message);
+      if (errorEl) errorEl.innerText = "نام کاربری یا رمز عبور اشتباه است.";
+      return;
+    }
+
+    // ۳. دریافت پروفایل کاربر و دسترسی‌ها از جدول profiles
+    const userId = data.user.id;
+    const { data: profile, error: profileError } = await _supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (profileError || !profile || !profile.active) {
+      if (errorEl) errorEl.innerText = "حساب کاربری شما فعال نیست یا پروفایل یافت نشد.";
+      await _supabase.auth.signOut();
+      return;
+    }
+
+    // ۴. ذخیره وضعیت ورود و دسترسی‌ها
+    currentUserProfile = profile;
+    isAdmin = true; // فعال‌سازی مد مدیریت
+    
+    // بستن مودال لاگین و به‌روزرسانی UI
+    closeLoginModal();
+    updateUIForAdmin();
+    alert(`خوش آمدید ${profile.display_name || profile.username}`);
+
+  } catch (err) {
+    console.error("Login Exception:", err);
+    if (errorEl) errorEl.innerText = "خطا در ارتباط با سرور.";
+  }
+}
 async function restoreSession(){const {data}=await sb.auth.getSession();session=data.session;if(!session){applyAuth();return}const {data:p}=await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id',session.user.id).maybeSingle();if(p&&p.active!==false){profile=p;applyAuth();trackPresence()}else{await sb.auth.signOut();session=null;profile=null;applyAuth()}}
 sb.auth.onAuthStateChange(async(_event,s)=>{session=s;if(!s){profile=null;applyAuth();}else if(!profile){const {data:p}=await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id',s.user.id).maybeSingle();profile=p;applyAuth();trackPresence()}});
 function has(perm){return !!profile?.permissions?.[perm]}
