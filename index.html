@@ -1,209 +1,24 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>سامانه پیشرفته مدیریت موجودی قطعات (متصل به دیتابیس)</title>
-  <link rel="stylesheet" href="style.css">
-  <!-- کتابخانه اکسل و کتابخانه رسمی Supabase -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#2563eb">
+<title>سامانه مدیریت موجودی قطعات</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-
-  <!-- هدر اصلی -->
-  <header class="top-header">
-    <div class="header-right">
-      <span id="network-status" class="status-badge online">🟢 در حال دریافت اطلاعات...</span>
-      <h1>سامانه مدیریت موجودی و قیمت‌گذاری قطعات کامپیوتر</h1>
-    </div>
-    <div class="header-left">
-      <div id="user-status-box" class="user-info">
-        وضعیت: <strong>کاربر عادی (فقط مشاهده)</strong>
-      </div>
-      <button id="auth-action-btn" onclick="openLoginModal()" class="btn-primary btn-sm">🔒 ورود به حالت ادمین</button>
-    </div>
-  </header>
-
-  <main class="main-container">
-    <!-- تب‌های دسته‌بندی پویا -->
-    <div class="section-tabs" id="dynamic-category-tabs">
-      <!-- با جاوااسکریپت پر می‌شود -->
-    </div>
-
-    <!-- نوار ابزار -->
-    <div class="toolbar">
-      <div class="tools-group">
-        <button onclick="copyFullPriceList()" class="btn-primary">📋 کپی کل لیست قیمت (مخصوص تلگرام)</button>
-      </div>
-      
-      <!-- ابزارهای مخصوص ادمین -->
-      <div class="admin-only tools-group">
-        <button onclick="openAddModal()" class="btn-success">➕ ثبت قطعه جدید (تکی)</button>
-        <button onclick="openConfigModal()" class="btn-warning">⚙️ مدیریت کشویی‌ها (دسته‌ها، برندها، مالکین)</button>
-        <button onclick="downloadRtlExcelTemplate()" class="btn-secondary">📥 دانلود قالب نمونه اکسل (فارسی)</button>
-        <label class="btn-secondary upload-btn">
-          📤 آپلود دسته‌جمعی اکسل
-          <input type="file" id="excel-file-input" accept=".xlsx, .xls" onchange="uploadExcelBatch(event)" hidden>
-        </label>
-      </div>
-    </div>
-
-    <!-- جدول داده‌ها -->
-    <div class="table-container">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>دسته</th>
-            <th>برند</th>
-            <th>مدل قطعه</th>
-            <th>واحد</th>
-            <th>مالک</th>
-            <th>تعداد</th>
-            <th>قیمت (تومان)</th>
-            <th>وضعیت</th>
-            <th>گارانتی</th>
-            <th>عملیات</th>
-          </tr>
-        </thead>
-        <tbody id="inventory-tbody">
-          <!-- داده‌ها وارد می‌شوند -->
-        </tbody>
-      </table>
-    </div>
-  </main>
-
-  <!-- مودال ورود ادمین -->
-  <div id="login-modal" class="modal hidden">
-    <div class="modal-content modal-sm">
-      <span class="close-btn" onclick="closeLoginModal()">&times;</span>
-      <h3>ورود به حالت مدیریت (ادمین)</h3>
-      <p class="login-subtext">نام کاربری یا ایمیل و رمز عبور خود را وارد کنید.</p>
-      <form onsubmit="handleAdminLogin(event)">
-        <div class="form-group">
-          <label>نام کاربری یا ایمیل:</label>
-          <input type="text" id="admin-username-input" placeholder="مثال: admin یا admin@example.com" autocomplete="username" required>
-        </div>
-        <div class="form-group">
-          <label>رمز عبور:</label>
-          <input type="password" id="admin-pass-input" placeholder="رمز عبور" autocomplete="current-password" required>
-        </div>
-        <button type="submit" id="admin-login-btn" class="btn-primary full-width">ورود و فعال سازی</button>
-      </form>
-    </div>
-  </div>
-
-  <!-- مودال ثبت/ویرایش قطعه -->
-  <div id="item-modal" class="modal hidden">
-    <div class="modal-content">
-      <span class="close-btn" onclick="closeItemModal()">&times;</span>
-      <h3 id="modal-title">ثبت قطعه جدید</h3>
-      <form id="item-form" onsubmit="saveItemSingle(event)">
-        <input type="hidden" id="item-id">
-
-        <div class="form-row">
-          <div class="form-group">
-            <label>دسته‌بندی قطعه:</label>
-            <select id="category" required></select>
-          </div>
-          <div class="form-group">
-            <label>برند قطعه:</label>
-            <select id="brand" required></select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>مدل دقیق قطعه:</label>
-          <input type="text" id="model" placeholder="مثال: ROG Strix RTX 3080 OC Edition" required>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label>واحد مربوطه:</label>
-            <select id="unit">
-              <option value="واحد ۱">واحد ۱</option>
-              <option value="واحد ۲">واحد ۲</option>
-              <option value="واحد ۳">واحد ۳</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>مالکیت:</label>
-            <select id="owner_type" required></select>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label>تعداد موجودی:</label>
-            <input type="number" id="quantity" value="1" min="1" required>
-          </div>
-          <div class="form-group">
-            <label>قیمت (تومان):</label>
-            <input type="text" id="price" placeholder="18,500,000" oninput="formatPriceInput(this)" required>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label>وضعیت ظاهری/فنی:</label>
-            <select id="item_condition" onchange="handleConditionChange(this.value)">
-              <option value="نو">نو</option>
-              <option value="دست دوم">دست دوم</option>
-              <option value="تعمیری">تعمیری</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>وضعیت گارانتی:</label>
-            <input type="text" id="warranty" placeholder="مثال: ۱۸ ماه گارانتی اصلی">
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>توضیحات تکمیلی:</label>
-          <textarea id="description" rows="2"></textarea>
-        </div>
-
-        <button type="submit" id="save-btn" class="btn-success full-width">ذخیره قطعه در دیتابیس</button>
-      </form>
-    </div>
-  </div>
-
-  <!-- مودال مدیریت لیست‌های کشویی (تنظیمات ادمین) -->
-  <div id="config-modal" class="modal hidden">
-    <div class="modal-content">
-      <span class="close-btn" onclick="closeConfigModal()">&times;</span>
-      <h3>⚙️ مدیریت لیست‌های کشویی (افزودن / حذف گزینه‌ها)</h3>
-      <p class="login-subtext">می‌توانید گزینه‌های دلخواه خود را به لیست‌های کشویی اضافه کنید.</p>
-      
-      <div class="config-section">
-        <h4>۱. مدیریت دسته‌بندی‌ها (مثل فن سی‌پیو، پاور، ...)</h4>
-        <div class="add-opt-row">
-          <input type="text" id="new-cat-name" placeholder="عنوان دسته (مثلا: فن سی‌پیو)">
-          <button onclick="addConfigOption('categories')" class="btn-success btn-sm">افزودن دسته</button>
-        </div>
-        <ul id="cat-list-display" class="opt-list"></ul>
-      </div>
-
-      <div class="config-section">
-        <h4>۲. مدیریت برندها (مثل ASUS, MSI, Green)</h4>
-        <div class="add-opt-row">
-          <input type="text" id="new-brand-name" placeholder="نام برند (مثلا: Cooler Master)">
-          <button onclick="addConfigOption('brands')" class="btn-success btn-sm">افزودن برند</button>
-        </div>
-        <ul id="brand-list-display" class="opt-list"></ul>
-      </div>
-
-      <div class="config-section">
-        <h4>۳. مدیریت مالکین (مثل مجموعه، میلاد، علی)</h4>
-        <div class="add-opt-row">
-          <input type="text" id="new-owner-name" placeholder="نام مالک (مثلا: میلاد)">
-          <button onclick="addConfigOption('owners')" class="btn-success btn-sm">افزودن مالک</button>
-        </div>
-        <ul id="owner-list-display" class="opt-list"></ul>
-      </div>
-    </div>
-  </div>
-
-  <script src="script.js"></script>
-</body>
-</html>
+<header class="top-header"><div class="brand"><div class="brand-mark">PC</div><div><h1>مدیریت موجودی قطعات</h1><span>لیست قیمت و موجودی آنلاین</span></div></div><div class="header-actions"><span id="network-status" class="status-badge online">● در حال اتصال</span><span id="user-status-box" class="user-chip">کاربر عمومی · فقط مشاهده</span><button id="auth-action-btn" onclick="openLoginModal()" class="btn-primary btn-sm">🔐 ورود به پنل</button></div></header>
+<main class="main-container">
+<section class="hero-card"><div><div class="eyebrow">قیمت و موجودی</div><h2>لیست قطعات</h2><p>اطلاعات برای همه قابل مشاهده است؛ عملیات مدیریتی فقط پس از ورود نمایش داده می‌شود.</p></div><div class="hero-stats"><div><strong id="stat-items">۰</strong><span>قطعه</span></div><div><strong id="stat-categories">۰</strong><span>دسته</span></div></div></section>
+<section class="content-card"><div class="section-tabs" id="dynamic-category-tabs"></div><div class="toolbar"><div class="tools-group grow"><div class="search-wrap"><span>⌕</span><input id="search-input" type="search" placeholder="جستجوی برند، مدل یا دسته..." oninput="renderTable()"></div></div><div class="tools-group"><button onclick="copyFullPriceList()" class="btn-secondary">📋 کپی لیست قیمت</button><div id="admin-toolbar" class="tools-group hidden"><button onclick="openAddModal()" class="btn-success">＋ ثبت قطعه</button><button onclick="openConfigModal()" class="btn-warning">⚙️ تنظیمات</button><button onclick="openAdminModal()" class="btn-secondary">👥 مدیران</button><button onclick="openLogsModal()" class="btn-secondary">🕵️ گزارش فعالیت</button><button onclick="downloadBackupExcel()" class="btn-primary">📥 بکاپ Excel</button><label class="btn-secondary upload-btn">📤 ورود Excel<input type="file" id="excel-file-input" accept=".xlsx,.xls" onchange="uploadExcelBatch(event)" hidden></label></div></div></div><div id="sync-banner" class="sync-banner hidden"></div><div class="table-container"><table class="data-table"><thead><tr><th>دسته</th><th>برند</th><th>مدل قطعه</th><th>واحد</th><th>مالک</th><th>تعداد</th><th>قیمت</th><th>وضعیت</th><th>گارانتی</th><th>عملیات</th></tr></thead><tbody id="inventory-tbody"></tbody></table></div></section>
+</main>
+<div id="login-modal" class="modal hidden" onclick="closeOnBackdrop(event,'login-modal')"><div class="modal-content modal-sm" onclick="event.stopPropagation()"><button class="close-btn" onclick="closeLoginModal()">×</button><div class="modal-icon">🔐</div><h3>ورود به پنل مدیریت</h3><p class="login-subtext">نام کاربری و رمز عبور مدیر را وارد کنید.</p><form onsubmit="handleAdminLogin(event)"><div class="form-group"><label>نام کاربری</label><input id="admin-username-input" autocomplete="username" required></div><div class="form-group"><label>رمز عبور</label><input type="password" id="admin-pass-input" autocomplete="current-password" required></div><button id="login-btn" class="btn-primary full-width">ورود</button></form></div></div>
+<div id="item-modal" class="modal hidden" onclick="closeOnBackdrop(event,'item-modal')"><div class="modal-content" onclick="event.stopPropagation()"><button class="close-btn" onclick="closeItemModal()">×</button><h3 id="modal-title">ثبت قطعه جدید</h3><form id="item-form" onsubmit="saveItemSingle(event)"><input type="hidden" id="item-id"><input type="hidden" id="item-version"><div class="form-row"><div class="form-group"><label>دسته‌بندی</label><select id="category" required></select></div><div class="form-group"><label>برند</label><select id="brand" required></select></div></div><div class="form-group"><label>مدل دقیق</label><input id="model" required></div><div class="form-row"><div class="form-group"><label>واحد</label><select id="unit"><option>واحد ۱</option><option>واحد ۲</option><option>واحد ۳</option></select></div><div class="form-group"><label>مالکیت</label><select id="owner_type" required></select></div></div><div class="form-row"><div class="form-group"><label>تعداد</label><input type="number" id="quantity" value="1" min="0" required></div><div class="form-group"><label>قیمت (تومان)</label><input id="price" inputmode="numeric" placeholder="18,500,000" oninput="formatPriceInput(this)" required></div></div><div class="form-row"><div class="form-group"><label>وضعیت</label><select id="item_condition" onchange="handleConditionChange(this.value)"><option>نو</option><option>دست دوم</option><option>تعمیری</option></select></div><div class="form-group"><label>گارانتی</label><input id="warranty"></div></div><div class="form-group"><label>توضیحات</label><textarea id="description" rows="3"></textarea></div><div class="modal-actions"><button type="button" class="btn-secondary" onclick="closeItemModal()">لغو</button><button id="save-btn" class="btn-success">ذخیره</button></div></form></div></div>
+<div id="config-modal" class="modal hidden" onclick="closeOnBackdrop(event,'config-modal')"><div class="modal-content" onclick="event.stopPropagation()"><button class="close-btn" onclick="closeConfigModal()">×</button><h3>⚙️ مدیریت گزینه‌ها</h3><p class="login-subtext">تنظیمات بین همه مدیران مشترک است.</p><div class="config-section"><h4>دسته‌بندی‌ها</h4><div class="add-opt-row"><input id="new-cat-name" placeholder="مثلاً فن سی‌پی‌یو"><button onclick="addConfigOption('categories')" class="btn-success btn-sm">افزودن</button></div><ul id="cat-list-display" class="opt-list"></ul></div><div class="config-section"><h4>برندها</h4><div class="add-opt-row"><input id="new-brand-name" placeholder="مثلاً Cooler Master"><button onclick="addConfigOption('brands')" class="btn-success btn-sm">افزودن</button></div><ul id="brand-list-display" class="opt-list"></ul></div><div class="config-section"><h4>مالکین</h4><div class="add-opt-row"><input id="new-owner-name" placeholder="مثلاً میلاد"><button onclick="addConfigOption('owners')" class="btn-success btn-sm">افزودن</button></div><ul id="owner-list-display" class="opt-list"></ul></div></div></div>
+<div id="admin-modal" class="modal hidden" onclick="closeOnBackdrop(event,'admin-modal')"><div class="modal-content wide" onclick="event.stopPropagation()"><button class="close-btn" onclick="closeAdminModal()">×</button><div class="modal-heading-row"><div><h3>👥 مدیران سیستم</h3><p class="login-subtext">حساب‌ها، سطح دسترسی و کاربران آنلاین</p></div><button class="btn-success" onclick="openAdminEditor()">＋ مدیر جدید</button></div><div class="online-panel"><strong>🟢 مدیران آنلاین</strong><div id="online-users" class="online-users">در حال دریافت...</div></div><div id="admins-list" class="admin-list"></div></div></div>
+<div id="admin-editor-modal" class="modal hidden" onclick="closeOnBackdrop(event,'admin-editor-modal')"><div class="modal-content" onclick="event.stopPropagation()"><button class="close-btn" onclick="closeAdminEditor()">×</button><h3 id="admin-editor-title">مدیر جدید</h3><form onsubmit="saveAdmin(event)"><input type="hidden" id="admin-user-id"><div class="form-group"><label>نام نمایشی</label><input id="admin-display-name" required></div><div class="form-group"><label>نام کاربری</label><input id="admin-new-username" required autocomplete="off"></div><div class="form-group"><label>رمز عبور</label><input type="password" id="admin-new-password" minlength="8" placeholder="حداقل ۸ کاراکتر"></div><div class="form-group"><label>سطح دسترسی</label><div id="permission-grid" class="permission-grid"></div></div><div class="modal-actions"><button type="button" class="btn-secondary" onclick="closeAdminEditor()">لغو</button><button class="btn-success">ذخیره مدیر</button></div></form></div></div>
+<div id="logs-modal" class="modal hidden" onclick="closeOnBackdrop(event,'logs-modal')"><div class="modal-content wide" onclick="event.stopPropagation()"><button class="close-btn" onclick="closeLogsModal()">×</button><h3>🕵️ گزارش فعالیت‌ها</h3><p class="login-subtext">آخرین تغییرات ثبت‌شده در سامانه</p><div class="table-container"><table class="data-table"><thead><tr><th>زمان</th><th>مدیر</th><th>عملیات</th><th>قطعه</th><th>جزئیات</th></tr></thead><tbody id="logs-tbody"></tbody></table></div></div></div>
+<div id="toast-container" class="toast-container"></div>
+<script src="script.js"></script>
+</body></html>
