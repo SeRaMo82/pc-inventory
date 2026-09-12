@@ -1,61 +1,272 @@
-const SUPABASE_URL="https://kwknfmxfpjrmqybcksne.supabase.co";
-const SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3a25mbXhmcGpybXF5YmNrc25lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1ODM4MzUsImV4cCI6MjEwNDE1OTgzNX0.K5UNwxMbvXXyEOKoQ8DQ9eIVRUZrRvQxS3b4F1SMIDk";
-const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
-const ADMIN_FN=`${SUPABASE_URL}/functions/v1/admin-users`;
-const defaults={categories:["کارت گرافیک","سی‌پی‌یو (CPU)","رم (RAM)","مادربورد","پاور","کیس","فن سی‌پی‌یو","سایر"],brands:["ASUS","MSI","GIGABYTE","Corsair","Intel","AMD","Green","Cooler Master","سایر"],owners:["مجموعه","میلاد","محسن","علی","شخص حقیقی"]};
-const permissions={view_inventory:"مشاهده موجودی",create_item:"ثبت قطعه",edit_item:"ویرایش قطعه",delete_item:"حذف قطعه",change_price:"تغییر قیمت",change_quantity:"تغییر موجودی",manage_config:"مدیریت گزینه‌ها",export_data:"دریافت بکاپ",view_logs:"مشاهده گزارش‌ها",manage_admins:"مدیریت مدیران"};
-let inventory=[],config={...defaults},currentCategory="all",profile=null,session=null,presenceChannel=null,realtimeChannel=null,originalEditSnapshot=null;
+// 🔐 سیستم ورود ادمین - Supabase Auth
 
-document.addEventListener('DOMContentLoaded',async()=>{document.addEventListener('keydown',e=>{if(e.key==='Escape')closeTopModal()});window.addEventListener('online',()=>setNetwork(true));window.addEventListener('offline',()=>setNetwork(false));setNetwork(navigator.onLine);await loadConfig();await restoreSession();await fetchInventory();subscribeRealtime();});
-function toast(msg,type=''){const d=document.createElement('div');d.className=`toast ${type}`;d.textContent=msg;document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),4200)}
-function setNetwork(ok){const e=document.getElementById('network-status');e.className=`status-badge ${ok?'online':'offline'}`;e.textContent=ok?'● آنلاین':'● آفلاین'}
-function setStatus(text){document.getElementById('network-status').textContent=text}
-function fmt(n){return Number(n||0).toLocaleString('fa-IR')}
-function jalaliDateTime(iso=new Date().toISOString()){return new Intl.DateTimeFormat('fa-IR-u-ca-persian',{weekday:'long',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(iso))}
-function closeOnBackdrop(e,id){if(e.target.id===id)document.getElementById(id).classList.add('hidden')}
-function closeTopModal(){const ids=['login-modal','item-modal','config-modal','admin-modal','admin-editor-modal','logs-modal'];for(const id of ids){const el=document.getElementById(id);if(el&&!el.classList.contains('hidden')){el.classList.add('hidden');return}}}
-function openLoginModal(){if(session){signOut();return}document.getElementById('login-modal').classList.remove('hidden');setTimeout(()=>document.getElementById('admin-username-input').focus(),50)}
-function closeLoginModal(){document.getElementById('login-modal').classList.add('hidden');document.getElementById('admin-username-input').value='';document.getElementById('admin-pass-input').value=''}
-async function handleAdminLogin(e){e.preventDefault();const btn=document.getElementById('login-btn');const username=document.getElementById('admin-username-input').value.trim().toLowerCase();const password=document.getElementById('admin-pass-input').value;btn.disabled=true;btn.textContent='در حال ورود...';try{const {data:p,error:pe}=await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('username',username).maybeSingle();if(pe)throw pe;if(!p||p.active===false){toast('نام کاربری یا رمز عبور نادرست است.','error');return}const {data,error}=await sb.auth.signInWithPassword({email:p.login_email,password});if(error)throw error;session=data.session;profile=p;applyAuth();closeLoginModal();await trackPresence();toast(`خوش آمدید ${p.display_name||p.username}`,'success')}catch(err){console.error(err);toast('ورود ناموفق بود؛ نام کاربری یا رمز عبور را بررسی کنید.','error')}finally{btn.disabled=false;btn.textContent='ورود'}}
-async function restoreSession(){const {data}=await sb.auth.getSession();session=data.session;if(!session){applyAuth();return}const {data:p}=await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id',session.user.id).maybeSingle();if(p&&p.active!==false){profile=p;applyAuth();trackPresence()}else{await sb.auth.signOut();session=null;profile=null;applyAuth()}}
-sb.auth.onAuthStateChange(async(_event,s)=>{session=s;if(!s){profile=null;applyAuth();}else if(!profile){const {data:p}=await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id',s.user.id).maybeSingle();profile=p;applyAuth();trackPresence()}});
-function has(perm){return !!profile?.permissions?.[perm]}
-function applyAuth(){const logged=!!session&&!!profile;document.body.classList.toggle('is-admin',logged);document.getElementById('admin-toolbar').classList.toggle('hidden',!logged);document.getElementById('user-status-box').textContent=logged?`${profile.display_name||profile.username} · مدیر`:'کاربر عمومی · فقط مشاهده';document.getElementById('auth-action-btn').textContent=logged?'🚪 خروج از پنل':'🔐 ورود به پنل';renderTable()}
-async function signOut(){if(presenceChannel){await sb.removeChannel(presenceChannel);presenceChannel=null}await sb.auth.signOut();session=null;profile=null;applyAuth();toast('از پنل مدیریت خارج شدید.')}
-async function trackPresence(){if(!session||!profile)return;if(presenceChannel)await sb.removeChannel(presenceChannel);presenceChannel=sb.channel('inventory-presence',{config:{presence:{key:profile.id}}});presenceChannel.on('presence',{event:'sync'},()=>renderOnlineUsers()).subscribe(async status=>{if(status==='SUBSCRIBED'){await presenceChannel.track({username:profile.username,name:profile.display_name,at:new Date().toISOString()});renderOnlineUsers()}})}
-function renderOnlineUsers(){const box=document.getElementById('online-users');if(!box||!presenceChannel)return;const state=presenceChannel.presenceState();const users=[];Object.values(state).flat().forEach(x=>{if(x?.username&&!users.some(u=>u.username===x.username))users.push(x)});box.innerHTML=users.length?users.map(u=>`<span class="online-user">🟢 ${esc(u.name||u.username)}</span>`).join(''):'هیچ مدیر وارد پنل نیست.'}
-async function loadConfig(){try{const {data,error}=await sb.from('app_config').select('type,value').order('value');if(error)throw error;config={categories:[],brands:[],owners:[]};(data||[]).forEach(r=>{if(config[r.type])config[r.type].push(r.value)});for(const k of Object.keys(defaults))if(!config[k].length)config[k]=defaults[k];}catch(e){console.warn('config fallback',e);config=structuredClone(defaults)}buildCategoryTabs();populateDropdowns()}
-function buildCategoryTabs(){const c=document.getElementById('dynamic-category-tabs');c.innerHTML='';const all=document.createElement('button');all.className=`section-btn ${currentCategory==='all'?'active':''}`;all.textContent='همه قطعات';all.onclick=()=>switchCategory('all',all);c.appendChild(all);config.categories.forEach(cat=>{const b=document.createElement('button');b.className=`section-btn ${currentCategory===cat?'active':''}`;b.textContent=cat;b.onclick=()=>switchCategory(cat,b);c.appendChild(b)})}
-function populateDropdowns(){for(const [id,key] of [['category','categories'],['brand','brands'],['owner_type','owners']]){const s=document.getElementById(id);s.innerHTML='';config[key].forEach(x=>{const o=document.createElement('option');o.value=x;o.textContent=x;s.appendChild(o)})}}
-function switchCategory(cat,btn){currentCategory=cat;document.querySelectorAll('.section-btn').forEach(x=>x.classList.remove('active'));btn.classList.add('active');renderTable()}
-async function fetchInventory(){setStatus('● همگام‌سازی...');const {data,error}=await sb.from('inventory').select('*').order('created_at',{ascending:false});if(error){console.error(error);setStatus('● خطای اتصال');toast('دریافت اطلاعات ناموفق بود.','error');return}inventory=data||[];setStatus(navigator.onLine?'● آنلاین':'● آفلاین');renderTable()}
-function renderTable(){const tbody=document.getElementById('inventory-tbody');const q=(document.getElementById('search-input')?.value||'').trim().toLowerCase();const filtered=inventory.filter(i=>(currentCategory==='all'||i.category===currentCategory)&&(!q||`${i.category} ${i.brand} ${i.model} ${i.owner_type}`.toLowerCase().includes(q)));document.getElementById('stat-items').textContent=fmt(inventory.length);document.getElementById('stat-categories').textContent=fmt(new Set(inventory.map(x=>x.category)).size);tbody.innerHTML='';if(!filtered.length){tbody.innerHTML='<tr><td colspan="10" style="text-align:center;padding:35px;color:#64748b">قطعه‌ای پیدا نشد.</td></tr>';return}for(const item of filtered){const tr=document.createElement('tr');const canEdit=has('edit_item')||has('change_price')||has('change_quantity');const canDelete=has('delete_item');tr.innerHTML=`<td>${esc(item.category)}</td><td><strong>${esc(item.brand)}</strong></td><td>${esc(item.model)}</td><td>${esc(item.unit)}</td><td>${esc(item.owner_type)}</td><td>${fmt(item.quantity)}</td><td><strong>${fmt(item.price)} تومان</strong></td><td>${esc(item.item_condition)}</td><td>${esc(item.warranty||'-')}</td><td><button onclick="copySingleItem(${item.id})" class="btn-primary btn-sm">📋</button>${canEdit?` <button onclick="editItemSingle(${item.id})" class="btn-secondary btn-sm">✏️</button>`:''}${canDelete?` <button onclick="deleteItemSingle(${item.id})" class="btn-danger btn-sm">🗑</button>`:''}</td>`;tbody.appendChild(tr)}}
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
-function formatPriceInput(input){const v=input.value.replace(/,/g,'').replace(/[^\d]/g,'');input.value=v?Number(v).toLocaleString('en-US'):''}
-function handleConditionChange(v){const w=document.getElementById('warranty');if(v==='تعمیری'){w.value='بدون گارانتی (تعمیری)';w.disabled=true}else{w.disabled=false;if(w.value.includes('تعمیری'))w.value=''}}
-function openAddModal(){if(!has('create_item'))return toast('دسترسی ثبت قطعه ندارید.','error');document.getElementById('item-form').reset();document.getElementById('item-id').value='';document.getElementById('item-version').value='';originalEditSnapshot=null;document.getElementById('warranty').disabled=false;document.getElementById('modal-title').textContent='ثبت قطعه جدید';document.getElementById('item-modal').classList.remove('hidden')}
-function closeItemModal(){document.getElementById('item-modal').classList.add('hidden')}
-function editItemSingle(id){const item=inventory.find(x=>x.id===id);if(!item)return;document.getElementById('item-id').value=item.id;document.getElementById('item-version').value=item.version??1;originalEditSnapshot=JSON.parse(JSON.stringify(item));for(const [id,val] of [['category',item.category],['brand',item.brand],['model',item.model],['unit',item.unit],['owner_type',item.owner_type],['quantity',item.quantity],['item_condition',item.item_condition],['warranty',item.warranty||''],['description',item.description||'']])document.getElementById(id).value=val;document.getElementById('price').value=Number(item.price||0).toLocaleString('en-US');handleConditionChange(item.item_condition);document.getElementById('modal-title').textContent='ویرایش قطعه';document.getElementById('item-modal').classList.remove('hidden')}
-async function saveItemSingle(e){e.preventDefault();const id=document.getElementById('item-id').value;const old=inventory.find(x=>String(x.id)===String(id));if(id&&!(has('edit_item')||has('change_price')||has('change_quantity')))return toast('دسترسی ویرایش ندارید.','error');if(!id&&!has('create_item'))return toast('دسترسی ثبت ندارید.','error');const payload={category:document.getElementById('category').value,brand:document.getElementById('brand').value,model:document.getElementById('model').value,unit:document.getElementById('unit').value,owner_type:document.getElementById('owner_type').value,quantity:Number(document.getElementById('quantity').value),price:Number(document.getElementById('price').value.replace(/,/g,'')),item_condition:document.getElementById('item_condition').value,warranty:document.getElementById('warranty').value,description:document.getElementById('description').value};const btn=document.getElementById('save-btn');btn.disabled=true;btn.textContent='در حال ذخیره...';try{if(id){if(!has('edit_item')){if(payload.price!==old.price&&!has('change_price'))throw Error('price');if(payload.quantity!==old.quantity&&!has('change_quantity'))throw Error('quantity')}const expected=Number(document.getElementById('item-version').value||1);const {data,error}=await sb.from('inventory').update({...payload,version:expected+1,updated_at:new Date().toISOString(),updated_by:session.user.id}).eq('id',id).eq('version',expected).select().maybeSingle();if(error)throw error;if(!data){const {data:remote}=await sb.from('inventory').select('*').eq('id',id).single();if(remote&&originalEditSnapshot){const fields=['category','brand','model','unit','owner_type','quantity','price','item_condition','warranty','description'];const mine={};const theirs={};fields.forEach(f=>{if(JSON.stringify(payload[f])!==JSON.stringify(originalEditSnapshot[f]))mine[f]=payload[f];if(JSON.stringify(remote[f])!==JSON.stringify(originalEditSnapshot[f]))theirs[f]=remote[f]});const overlap=Object.keys(mine).filter(f=>Object.prototype.hasOwnProperty.call(theirs,f));if(!overlap.length){const merged={...theirs,...mine};const {data:mergedRow,error:mergeError}=await sb.from('inventory').update({...merged,version:remote.version+1,updated_at:new Date().toISOString(),updated_by:session.user.id}).eq('id',id).eq('version',remote.version).select().maybeSingle();if(!mergeError&&mergedRow){closeItemModal();await fetchInventory();toast('دو تغییر همزمان بود؛ چون روی فیلدهای متفاوت بودند، با موفقیت ادغام شدند.','success');return}}}document.getElementById('sync-banner').classList.remove('hidden');document.getElementById('sync-banner').textContent='⚠️ این قطعه همزمان روی همان فیلد تغییر کرده است. تغییر نفر دیگر حفظ شد و اطلاعات جدید دریافت شد.';await fetchInventory();throw Error('conflict')}}else{const {error}=await sb.from('inventory').insert({...payload,version:1,updated_by:session.user.id});if(error)throw error}closeItemModal();await fetchInventory();toast('تغییرات با موفقیت ذخیره شد.','success')}catch(err){console.error(err);toast(err.message==='price'?'دسترسی تغییر قیمت ندارید.':err.message==='quantity'?'دسترسی تغییر موجودی ندارید.':err.message==='conflict'?'تعارض همزمانی؛ تغییر نفر دیگر حفظ شد.':'ذخیره‌سازی ناموفق بود.','error')}finally{btn.disabled=false;btn.textContent='ذخیره'}}
-async function deleteItemSingle(id){if(!has('delete_item'))return toast('دسترسی حذف ندارید.','error');const item=inventory.find(x=>x.id===id);if(!confirm(`قطعه «${item?.brand||''} ${item?.model||''}» حذف شود؟`))return;const {error}=await sb.from('inventory').delete().eq('id',id);if(error)toast('حذف ناموفق بود.','error');else{await fetchInventory();toast('قطعه حذف شد.','success')}}
-function copySingleItem(id){const i=inventory.find(x=>x.id===id);if(!i)return;const t=`📦 ${i.brand} ${i.model}\n🔹 دسته: ${i.category}\n💰 قیمت: ${fmt(i.price)} تومان\n📦 موجودی: ${fmt(i.quantity)}\n🛡 گارانتی: ${i.warranty||'بدون گارانتی'}\n🗓 تاریخ استعلام: ${jalaliDateTime()}`;navigator.clipboard.writeText(t);toast('متن آماده کپی شد.','success')}
-function copyFullPriceList(){const t=['📋 لیست قیمت قطعات موجود:','',...inventory.map((i,n)=>`${n+1}. ${i.brand} ${i.model} | ${fmt(i.price)} تومان`) ].join('\n');navigator.clipboard.writeText(t);toast('کل لیست قیمت کپی شد.','success')}
-function openConfigModal(){if(!has('manage_config'))return toast('دسترسی مدیریت گزینه‌ها ندارید.','error');renderConfigLists();document.getElementById('config-modal').classList.remove('hidden')}
-function closeConfigModal(){document.getElementById('config-modal').classList.add('hidden')}
-function renderConfigLists(){for(const [id,type] of [['cat-list-display','categories'],['brand-list-display','brands'],['owner-list-display','owners']]){const ul=document.getElementById(id);ul.innerHTML='';config[type].forEach(v=>{const li=document.createElement('li');li.innerHTML=`${esc(v)} <span onclick="removeConfigOption('${type}',${JSON.stringify(v)})">×</span>`;ul.appendChild(li)})}}
-async function addConfigOption(type){const ids={categories:'new-cat-name',brands:'new-brand-name',owners:'new-owner-name'};const input=document.getElementById(ids[type]),value=input.value.trim();if(!value||config[type].includes(value))return;if(!has('manage_config'))return toast('دسترسی ندارید.','error');const {error}=await sb.from('app_config').insert({type,value});if(error)toast('افزودن گزینه ناموفق بود.','error');else{input.value='';await loadConfig();renderConfigLists();toast('گزینه اضافه شد.','success')}}
-async function removeConfigOption(type,value){if(!has('manage_config')||!confirm(`«${value}» حذف شود؟`))return;const {error}=await sb.from('app_config').delete().eq('type',type).eq('value',value);if(error)toast('حذف گزینه ناموفق بود.','error');else{await loadConfig();renderConfigLists();toast('گزینه حذف شد.','success')}}
-function openAdminModal(){if(!has('manage_admins'))return toast('دسترسی مدیریت مدیران ندارید.','error');document.getElementById('admin-modal').classList.remove('hidden');loadAdmins()}
-function closeAdminModal(){document.getElementById('admin-modal').classList.add('hidden')}
-async function loadAdmins(){renderOnlineUsers();const box=document.getElementById('admins-list');box.innerHTML='در حال دریافت...';const {data,error}=await sb.from('profiles').select('id,username,display_name,permissions,active,created_at').order('created_at');if(error){box.textContent='خطا در دریافت مدیران';return}box.innerHTML='';for(const p of data||[]){const perms=Object.keys(p.permissions||{}).filter(k=>p.permissions[k]).map(k=>permissions[k]).filter(Boolean).slice(0,3).join('، ');const row=document.createElement('div');row.className='admin-row';row.innerHTML=`<div class="admin-meta"><strong>${esc(p.display_name||p.username)} ${p.active?'':'(غیرفعال)'}</strong><span>@${esc(p.username)} · ${esc(perms||'بدون دسترسی')}</span></div><div class="tools-group"><button class="btn-secondary btn-sm" onclick='openAdminEditor(${JSON.stringify(p)})'>ویرایش</button><button class="btn-danger btn-sm" onclick="deleteAdmin('${p.id}')">حذف</button></div>`;box.appendChild(row)}}
-function openAdminEditor(p=null){if(!has('manage_admins'))return;document.getElementById('admin-editor-title').textContent=p?'ویرایش مدیر':'مدیر جدید';document.getElementById('admin-user-id').value=p?.id||'';document.getElementById('admin-display-name').value=p?.display_name||'';document.getElementById('admin-new-username').value=p?.username||'';document.getElementById('admin-new-password').value='';const grid=document.getElementById('permission-grid');grid.innerHTML=Object.entries(permissions).map(([k,v])=>`<label class="permission-item"><input type="checkbox" data-perm="${k}" ${p?.permissions?.[k]?'checked':''}>${v}</label>`).join('');document.getElementById('admin-editor-modal').classList.remove('hidden')}
-function closeAdminEditor(){document.getElementById('admin-editor-modal').classList.add('hidden')}
-async function saveAdmin(e){e.preventDefault();const id=document.getElementById('admin-user-id').value;const perms={};document.querySelectorAll('#permission-grid [data-perm]').forEach(x=>perms[x.dataset.perm]=x.checked);const body={id:id||undefined,username:document.getElementById('admin-new-username').value.trim().toLowerCase(),display_name:document.getElementById('admin-display-name').value.trim(),password:document.getElementById('admin-new-password').value,permissions:perms};if(!id&&body.password.length<8)return toast('رمز عبور مدیر جدید باید حداقل ۸ کاراکتر باشد.','error');try{const {data:{session:s}}=await sb.auth.getSession();const r=await fetch(ADMIN_FN,{method:'POST',headers:{Authorization:`Bearer ${s.access_token}`,apikey:SUPABASE_KEY,'Content-Type':'application/json'},body:JSON.stringify(body)});const out=await r.json();if(!r.ok)throw Error(out.error||'خطا');closeAdminEditor();await loadAdmins();toast(id?'مدیر ویرایش شد.':'مدیر جدید ساخته شد.','success')}catch(err){console.error(err);toast(err.message,'error')}}
-async function deleteAdmin(id){if(id===profile.id)return toast('برای حذف حسابی که با آن وارد هستید، ابتدا با حساب دیگری وارد شوید.','warn');if(!confirm('این مدیر حذف شود؟'))return;try{const {data:{session:s}}=await sb.auth.getSession();const r=await fetch(ADMIN_FN,{method:'DELETE',headers:{Authorization:`Bearer ${s.access_token}`,apikey:SUPABASE_KEY,'Content-Type':'application/json'},body:JSON.stringify({id})});const out=await r.json();if(!r.ok)throw Error(out.error||'خطا');await loadAdmins();toast('مدیر حذف شد.','success')}catch(e){toast(e.message,'error')}}
-function openLogsModal(){if(!has('view_logs'))return toast('دسترسی گزارش فعالیت ندارید.','error');document.getElementById('logs-modal').classList.remove('hidden');loadLogs()}
-function closeLogsModal(){document.getElementById('logs-modal').classList.add('hidden')}
-async function loadLogs(){const tb=document.getElementById('logs-tbody');tb.innerHTML='<tr><td colspan="5">در حال دریافت...</td></tr>';const {data,error}=await sb.from('audit_logs').select('id,created_at,action,entity_id,details,profiles(display_name,username)').order('created_at',{ascending:false}).limit(100);if(error){tb.innerHTML='<tr><td colspan="5">خطا در دریافت گزارش</td></tr>';return}tb.innerHTML='';(data||[]).forEach(l=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${jalaliDateTime(l.created_at)}</td><td>${esc(l.profiles?.display_name||l.profiles?.username||'سیستم')}</td><td>${esc(l.action)}</td><td>${esc(l.entity_id||'-')}</td><td>${esc(JSON.stringify(l.details||{}))}</td>`;tb.appendChild(tr)})}
-async function downloadBackupExcel(){if(!has('export_data'))return toast('دسترسی دریافت بکاپ ندارید.','error');const rows=inventory.map(i=>({'دسته‌بندی':i.category,'برند':i.brand,'مدل قطعه':i.model,'واحد':i.unit,'مالک':i.owner_type,'تعداد':i.quantity,'قیمت (تومان)':i.price,'وضعیت':i.item_condition,'گارانتی':i.warranty||'','توضیحات':i.description||''}));const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};XLSX.utils.book_append_sheet(wb,ws,'موجودی');const now=new Date();const date=new Intl.DateTimeFormat('fa-IR-u-ca-persian',{weekday:'long',year:'numeric',month:'2-digit',day:'2-digit'}).format(now).replace(/[\u200e\u200f]/g,'');const time=now.toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'}).replace(':','-');XLSX.writeFile(wb,`بکاپ موجودی - ${date} - ساعت ${time}.xlsx`);toast('بکاپ Excel ساخته شد.','success')}
-async function uploadExcelBatch(e){if(!has('create_item'))return toast('دسترسی ورود Excel ندارید.','error');const file=e.target.files[0];if(!file)return;try{const data=new Uint8Array(await file.arrayBuffer()),wb=XLSX.read(data,{type:'array'}),rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);if(!rows.length)return toast('فایل خالی است.','warn');const batch=rows.map(r=>({category:r['دسته‌بندی']||'سایر',brand:r['برند']||'سایر',model:r['مدل قطعه']||'بدون مدل',unit:r['واحد']||'واحد ۱',owner_type:r['مالک']||'مجموعه',quantity:Number(r['تعداد']||1),price:Number(String(r['قیمت (تومان)']||0).replace(/,/g,'')),item_condition:r['وضعیت']||'نو',warranty:r['گارانتی']||'',description:r['توضیحات']||'',version:1,updated_by:session.user.id}));const {error}=await sb.from('inventory').insert(batch);if(error)throw error;await fetchInventory();toast(`${batch.length} قطعه وارد شد.`,'success')}catch(err){console.error(err);toast('ورود Excel ناموفق بود.','error')}finally{e.target.value=''}}
-function subscribeRealtime(){if(realtimeChannel)sb.removeChannel(realtimeChannel);realtimeChannel=sb.channel('inventory-live').on('postgres_changes',{event:'*',schema:'public',table:'inventory'},payload=>{const id=payload.new?.id??payload.old?.id;const local=inventory.find(x=>x.id===id);if(payload.eventType==='UPDATE'&&local&&local.version!==payload.new.version){inventory=inventory.map(x=>x.id===id?payload.new:x);renderTable();showSync(payload.new)}else if(payload.eventType==='INSERT'){if(!inventory.some(x=>x.id===payload.new.id))inventory.unshift(payload.new);renderTable();showSync(payload.new)}else if(payload.eventType==='DELETE'){inventory=inventory.filter(x=>x.id!==id);renderTable();showSync(payload.old)} }).on('postgres_changes',{event:'*',schema:'public',table:'app_config'},async()=>{await loadConfig();renderTable()}).subscribe()}
-function showSync(row){const b=document.getElementById('sync-banner');b.classList.remove('hidden');b.textContent=`🔄 اطلاعات به‌صورت لحظه‌ای به‌روزرسانی شد${row?.updated_by&&profile&&row.updated_by===profile.id?'':'؛ تغییر کاربر دیگر دریافت شد.'}`;setTimeout(()=>b.classList.add('hidden'),5000)}
+let currentProfile = null;
+
+function openLoginModal() {
+  if (isAdmin) {
+    logoutAdmin();
+    return;
+  }
+
+  document.getElementById('login-modal').classList.remove('hidden');
+
+  setTimeout(() => {
+    document.getElementById('admin-username-input')?.focus();
+  }, 50);
+}
+
+function closeLoginModal() {
+  document.getElementById('login-modal').classList.add('hidden');
+
+  const passwordInput =
+    document.getElementById('admin-pass-input');
+
+  if (passwordInput) {
+    passwordInput.value = '';
+  }
+}
+
+async function handleAdminLogin(event) {
+  event.preventDefault();
+
+  const usernameOrEmail =
+    document.getElementById('admin-username-input').value.trim();
+
+  const password =
+    document.getElementById('admin-pass-input').value;
+
+  if (!usernameOrEmail || !password) {
+    alert('نام کاربری و رمز عبور را وارد کنید.');
+    return;
+  }
+
+  const button =
+    document.getElementById('admin-login-btn');
+
+  button.disabled = true;
+  button.innerText = 'در حال ورود...';
+
+  try {
+
+    let loginEmail = usernameOrEmail;
+
+    /*
+     * اگر کاربر نام کاربری وارد کرده باشد،
+     * ابتدا login_email را از profiles پیدا می کنیم.
+     */
+    if (!usernameOrEmail.includes('@')) {
+
+      const { data: profile, error } =
+        await _supabase
+          .from('profiles')
+          .select('login_email')
+          .eq('username', usernameOrEmail.toLowerCase())
+          .eq('active', true)
+          .single();
+
+      if (error || !profile) {
+        throw new Error('نام کاربری یا رمز عبور نادرست است.');
+      }
+
+      loginEmail = profile.login_email;
+    }
+
+    /*
+     * ورود واقعی از طریق Supabase Auth
+     */
+    const { data, error } =
+      await _supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: password
+      });
+
+    if (error || !data.user) {
+      console.error('Supabase Login Error:', error);
+      throw new Error('نام کاربری یا رمز عبور نادرست است.');
+    }
+
+    /*
+     * دریافت پروفایل مدیر
+     */
+    const { data: profile, error: profileError } =
+      await _supabase
+        .from('profiles')
+        .select(`
+          id,
+          username,
+          display_name,
+          login_email,
+          permissions,
+          active
+        `)
+        .eq('id', data.user.id)
+        .single();
+
+    if (profileError || !profile) {
+
+      await _supabase.auth.signOut();
+
+      throw new Error(
+        'برای این حساب، پروفایل مدیر پیدا نشد.'
+      );
+    }
+
+    if (!profile.active) {
+
+      await _supabase.auth.signOut();
+
+      throw new Error(
+        'این حساب مدیر غیرفعال است.'
+      );
+    }
+
+    /*
+     * ورود موفق
+     */
+    currentProfile = profile;
+
+    isAdmin = true;
+
+    document.body.classList.add('is-admin');
+
+    const displayName =
+      profile.display_name ||
+      profile.username ||
+      'مدیر';
+
+    const statusBox =
+      document.getElementById('user-status-box');
+
+    if (statusBox) {
+      statusBox.innerHTML =
+        `وضعیت: <strong style="color:#16a34a;">
+          ${displayName} (مدیر سیستم)
+        </strong>`;
+    }
+
+    const authButton =
+      document.getElementById('auth-action-btn');
+
+    if (authButton) {
+      authButton.innerText =
+        '🚪 خروج از پنل مدیریت';
+    }
+
+    closeLoginModal();
+
+    renderTable();
+
+  } catch (error) {
+
+    console.error(
+      'Admin Login Failed:',
+      error
+    );
+
+    alert(
+      error.message ||
+      'ورود ناموفق بود.'
+    );
+
+  } finally {
+
+    button.disabled = false;
+
+    button.innerText =
+      'ورود و فعال سازی';
+  }
+}
+
+
+async function restoreAdminSession() {
+
+  const {
+    data: { session }
+  } = await _supabase.auth.getSession();
+
+  if (!session?.user) {
+    return;
+  }
+
+  const { data: profile } =
+    await _supabase
+      .from('profiles')
+      .select(`
+        id,
+        username,
+        display_name,
+        login_email,
+        permissions,
+        active
+      `)
+      .eq('id', session.user.id)
+      .single();
+
+  if (!profile || !profile.active) {
+
+    await _supabase.auth.signOut();
+
+    return;
+  }
+
+  currentProfile = profile;
+
+  isAdmin = true;
+
+  document.body.classList.add('is-admin');
+
+  const displayName =
+    profile.display_name ||
+    profile.username ||
+    'مدیر';
+
+  const statusBox =
+    document.getElementById('user-status-box');
+
+  if (statusBox) {
+    statusBox.innerHTML =
+      `وضعیت: <strong style="color:#16a34a;">
+        ${displayName} (مدیر سیستم)
+      </strong>`;
+  }
+
+  const authButton =
+    document.getElementById('auth-action-btn');
+
+  if (authButton) {
+    authButton.innerText =
+      '🚪 خروج از پنل مدیریت';
+  }
+
+  renderTable();
+}
+
+
+async function logoutAdmin() {
+
+  await _supabase.auth.signOut();
+
+  currentProfile = null;
+
+  isAdmin = false;
+
+  document.body.classList.remove('is-admin');
+
+  const statusBox =
+    document.getElementById('user-status-box');
+
+  if (statusBox) {
+    statusBox.innerHTML =
+      'وضعیت: <strong>کاربر عادی (فقط مشاهده)</strong>';
+  }
+
+  const authButton =
+    document.getElementById('auth-action-btn');
+
+  if (authButton) {
+    authButton.innerText =
+      '🔒 ورود به پنل مدیریت';
+  }
+
+  renderTable();
+}
