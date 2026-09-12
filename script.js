@@ -14,6 +14,7 @@ function fmt(n){return Number(n||0).toLocaleString('fa-IR')}
 function jalaliDateTime(iso=new Date().toISOString()){return new Intl.DateTimeFormat('fa-IR-u-ca-persian',{weekday:'long',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(iso))}
 function closeOnBackdrop(e,id){if(e.target.id===id)document.getElementById(id).classList.add('hidden')}
 function closeTopModal(){const ids=['login-modal','item-modal','config-modal','admin-modal','admin-editor-modal','logs-modal'];for(const id of ids){const el=document.getElementById(id);if(el&&!el.classList.contains('hidden')){el.classList.add('hidden');return}}}
+
 // 🔐 سیستم ورود ادمین - Supabase Auth
 
 let currentProfile = null;
@@ -25,130 +26,90 @@ function openLoginModal() {
   }
 
   document.getElementById('login-modal').classList.remove('hidden');
-
-  setTimeout(() => {
-    document.getElementById('admin-username-input')?.focus();
-  }, 50);
 }
 
 function closeLoginModal() {
   document.getElementById('login-modal').classList.add('hidden');
 
-  const passwordInput =
-    document.getElementById('admin-pass-input');
-
-  if (passwordInput) {
-    passwordInput.value = '';
-  }
+  const pass = document.getElementById('admin-pass-input');
+  if (pass) pass.value = '';
 }
 
 async function handleAdminLogin(event) {
   event.preventDefault();
 
-  const usernameOrEmail =
-    document.getElementById('admin-username-input').value.trim();
+  const input = document
+    .getElementById('admin-username-input')
+    .value
+    .trim();
 
-  const password =
-    document.getElementById('admin-pass-input').value;
+  const password = document
+    .getElementById('admin-pass-input')
+    .value;
 
-  if (!usernameOrEmail || !password) {
+  if (!input || !password) {
     alert('نام کاربری و رمز عبور را وارد کنید.');
     return;
   }
 
-  const button =
-    document.getElementById('admin-login-btn');
+  const button = document.getElementById('admin-login-btn');
 
   button.disabled = true;
   button.innerText = 'در حال ورود...';
 
   try {
+    let email = input;
 
-    let loginEmail = usernameOrEmail;
-
-    /*
-     * اگر کاربر نام کاربری وارد کرده باشد،
-     * ابتدا login_email را از profiles پیدا می کنیم.
-     */
-    if (!usernameOrEmail.includes('@')) {
-
-      const { data: profile, error } =
-        await _supabase
-          .from('profiles')
-          .select('login_email')
-          .eq('username', usernameOrEmail.toLowerCase())
-          .eq('active', true)
-          .single();
+    // اگر نام کاربری وارد شده، ایمیل آن را از profiles پیدا کن
+    if (!input.includes('@')) {
+      const { data: profile, error } = await _supabase
+        .from('profiles')
+        .select('login_email')
+        .eq('username', input.toLowerCase())
+        .eq('active', true)
+        .single();
 
       if (error || !profile) {
         throw new Error('نام کاربری یا رمز عبور نادرست است.');
       }
 
-      loginEmail = profile.login_email;
+      email = profile.login_email;
     }
 
-    /*
-     * ورود واقعی از طریق Supabase Auth
-     */
+    // ورود واقعی به Supabase Auth
     const { data, error } =
       await _supabase.auth.signInWithPassword({
-        email: loginEmail,
+        email: email,
         password: password
       });
 
     if (error || !data.user) {
-      console.error('Supabase Login Error:', error);
+      console.error(error);
       throw new Error('نام کاربری یا رمز عبور نادرست است.');
     }
 
-    /*
-     * دریافت پروفایل مدیر
-     */
+    // گرفتن پروفایل مدیر
     const { data: profile, error: profileError } =
       await _supabase
         .from('profiles')
-        .select(`
-          id,
-          username,
-          display_name,
-          login_email,
-          permissions,
-          active
-        `)
+        .select('*')
         .eq('id', data.user.id)
         .single();
 
     if (profileError || !profile) {
-
       await _supabase.auth.signOut();
-
-      throw new Error(
-        'برای این حساب، پروفایل مدیر پیدا نشد.'
-      );
+      throw new Error('پروفایل مدیر پیدا نشد.');
     }
 
     if (!profile.active) {
-
       await _supabase.auth.signOut();
-
-      throw new Error(
-        'این حساب مدیر غیرفعال است.'
-      );
+      throw new Error('این حساب مدیر غیرفعال است.');
     }
 
-    /*
-     * ورود موفق
-     */
     currentProfile = profile;
-
     isAdmin = true;
 
     document.body.classList.add('is-admin');
-
-    const displayName =
-      profile.display_name ||
-      profile.username ||
-      'مدیر';
 
     const statusBox =
       document.getElementById('user-status-box');
@@ -156,28 +117,23 @@ async function handleAdminLogin(event) {
     if (statusBox) {
       statusBox.innerHTML =
         `وضعیت: <strong style="color:#16a34a;">
-          ${displayName} (مدیر سیستم)
-        </strong>`;
+        ${profile.display_name || profile.username}
+        (مدیر سیستم)</strong>`;
     }
 
     const authButton =
       document.getElementById('auth-action-btn');
 
     if (authButton) {
-      authButton.innerText =
-        '🚪 خروج از پنل مدیریت';
+      authButton.innerText = '🚪 خروج از پنل مدیریت';
     }
 
     closeLoginModal();
-
     renderTable();
 
   } catch (error) {
 
-    console.error(
-      'Admin Login Failed:',
-      error
-    );
+    console.error('Login failed:', error);
 
     alert(
       error.message ||
@@ -187,9 +143,7 @@ async function handleAdminLogin(event) {
   } finally {
 
     button.disabled = false;
-
-    button.innerText =
-      'ورود و فعال سازی';
+    button.innerText = 'ورود و فعال سازی';
   }
 }
 
@@ -200,41 +154,24 @@ async function restoreAdminSession() {
     data: { session }
   } = await _supabase.auth.getSession();
 
-  if (!session?.user) {
-    return;
-  }
+  if (!session?.user) return;
 
   const { data: profile } =
     await _supabase
       .from('profiles')
-      .select(`
-        id,
-        username,
-        display_name,
-        login_email,
-        permissions,
-        active
-      `)
+      .select('*')
       .eq('id', session.user.id)
       .single();
 
   if (!profile || !profile.active) {
-
     await _supabase.auth.signOut();
-
     return;
   }
 
   currentProfile = profile;
-
   isAdmin = true;
 
   document.body.classList.add('is-admin');
-
-  const displayName =
-    profile.display_name ||
-    profile.username ||
-    'مدیر';
 
   const statusBox =
     document.getElementById('user-status-box');
@@ -242,16 +179,15 @@ async function restoreAdminSession() {
   if (statusBox) {
     statusBox.innerHTML =
       `وضعیت: <strong style="color:#16a34a;">
-        ${displayName} (مدیر سیستم)
-      </strong>`;
+      ${profile.display_name || profile.username}
+      (مدیر سیستم)</strong>`;
   }
 
   const authButton =
     document.getElementById('auth-action-btn');
 
   if (authButton) {
-    authButton.innerText =
-      '🚪 خروج از پنل مدیریت';
+    authButton.innerText = '🚪 خروج از پنل مدیریت';
   }
 
   renderTable();
@@ -263,29 +199,19 @@ async function logoutAdmin() {
   await _supabase.auth.signOut();
 
   currentProfile = null;
-
   isAdmin = false;
 
   document.body.classList.remove('is-admin');
 
-  const statusBox =
-    document.getElementById('user-status-box');
+  document.getElementById('user-status-box').innerHTML =
+    'وضعیت: <strong>کاربر عادی (فقط مشاهده)</strong>';
 
-  if (statusBox) {
-    statusBox.innerHTML =
-      'وضعیت: <strong>کاربر عادی (فقط مشاهده)</strong>';
-  }
-
-  const authButton =
-    document.getElementById('auth-action-btn');
-
-  if (authButton) {
-    authButton.innerText =
-      '🔒 ورود به پنل مدیریت';
-  }
+  document.getElementById('auth-action-btn').innerText =
+    '🔒 ورود به حالت ادمین';
 
   renderTable();
 }
+
 function switchCategory(cat,btn){currentCategory=cat;document.querySelectorAll('.section-btn').forEach(x=>x.classList.remove('active'));btn.classList.add('active');renderTable()}
 async function fetchInventory(){setStatus('● همگام‌سازی...');const {data,error}=await sb.from('inventory').select('*').order('created_at',{ascending:false});if(error){console.error(error);setStatus('● خطای اتصال');toast('دریافت اطلاعات ناموفق بود.','error');return}inventory=data||[];setStatus(navigator.onLine?'● آنلاین':'● آفلاین');renderTable()}
 function renderTable(){const tbody=document.getElementById('inventory-tbody');const q=(document.getElementById('search-input')?.value||'').trim().toLowerCase();const filtered=inventory.filter(i=>(currentCategory==='all'||i.category===currentCategory)&&(!q||`${i.category} ${i.brand} ${i.model} ${i.owner_type}`.toLowerCase().includes(q)));document.getElementById('stat-items').textContent=fmt(inventory.length);document.getElementById('stat-categories').textContent=fmt(new Set(inventory.map(x=>x.category)).size);tbody.innerHTML='';if(!filtered.length){tbody.innerHTML='<tr><td colspan="10" style="text-align:center;padding:35px;color:#64748b">قطعه‌ای پیدا نشد.</td></tr>';return}for(const item of filtered){const tr=document.createElement('tr');const canEdit=has('edit_item')||has('change_price')||has('change_quantity');const canDelete=has('delete_item');tr.innerHTML=`<td>${esc(item.category)}</td><td><strong>${esc(item.brand)}</strong></td><td>${esc(item.model)}</td><td>${esc(item.unit)}</td><td>${esc(item.owner_type)}</td><td>${fmt(item.quantity)}</td><td><strong>${fmt(item.price)} تومان</strong></td><td>${esc(item.item_condition)}</td><td>${esc(item.warranty||'-')}</td><td><button onclick="copySingleItem(${item.id})" class="btn-primary btn-sm">📋</button>${canEdit?` <button onclick="editItemSingle(${item.id})" class="btn-secondary btn-sm">✏️</button>`:''}${canDelete?` <button onclick="deleteItemSingle(${item.id})" class="btn-danger btn-sm">🗑</button>`:''}</td>`;tbody.appendChild(tr)}}
