@@ -18,69 +18,82 @@ function openLoginModal() { if (session) { signOut(); return } document.getEleme
 function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); document.getElementById('admin-username-input').value = ''; document.getElementById('admin-pass-input').value = '' }
 
 async function handleAdminLogin(e) {
-    e.preventDefault();
+  e.preventDefault();
 
-    const btn = document.getElementById('admin-login-btn');
-    const username = document
-        .getElementById('admin-username-input')
-        .value
-        .trim()
-        .toLowerCase();
+  const btn = document.getElementById('login-btn');
+  const username = document
+    .getElementById('admin-username-input')
+    .value
+    .trim()
+    .toLowerCase();
 
-    const password = document
-        .getElementById('admin-pass-input')
-        .value;
+  const password = document
+    .getElementById('admin-pass-input')
+    .value;
 
-    btn.disabled = true;
-    btn.textContent = 'در حال ورود...';
+  btn.disabled = true;
+  btn.textContent = 'در حال ورود...';
 
-    try {
-        const { data: loginEmail, error: lookupError } =
-            await sb.rpc('get_login_email', {
-                p_username: username
-            });
+  try {
+    const { data: loginEmail, error: lookupError } =
+      await _supabase.rpc('get_login_email', {
+        p_username: username
+      });
 
-        if (lookupError || !loginEmail) {
-            throw new Error('نام کاربری یا رمز عبور نادرست است.');
-        }
-
-        const { data, error } =
-            await sb.auth.signInWithPassword({
-                email: loginEmail,
-                password: password
-            });
-
-        if (error) throw error;
-
-        session = data.session;
-
-        const { data: p, error: profileError } =
-            await sb
-                .from('profiles')
-                .select('id,username,display_name,permissions,active,login_email')
-                .eq('id', data.user.id)
-                .single();
-
-        if (profileError || !p || !p.active) {
-            await sb.auth.signOut();
-            throw new Error('حساب مدیر معتبر نیست.');
-        }
-
-        profile = p;
-
-        applyAuth();
-        closeLoginModal();
-        await trackPresence();
-
-        toast(`خوش آمدید ${p.display_name || p.username}`, 'success');
-
-    } catch (err) {
-        console.error(err);
-        toast('نام کاربری یا رمز عبور نادرست است.', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'ورود';
+    if (lookupError) {
+      console.error('خطای دریافت ایمیل:', lookupError);
+      throw new Error('خطا در ارتباط با سامانه ورود');
     }
+
+    if (!loginEmail) {
+      throw new Error('نام کاربری پیدا نشد');
+    }
+
+    const { data, error } =
+      await _supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: password
+      });
+
+    if (error) {
+      console.error('خطای ورود:', error);
+      throw new Error('نام کاربری یا رمز عبور نادرست است');
+    }
+
+    const { data: profile, error: profileError } =
+      await _supabase
+        .from('profiles')
+        .select('id,username,display_name,permissions,active,login_email')
+        .eq('id', data.user.id)
+        .single();
+
+    if (profileError || !profile || !profile.active) {
+      await _supabase.auth.signOut();
+      throw new Error('حساب مدیر معتبر نیست');
+    }
+
+    isAdmin = true;
+
+    document.body.classList.add('is-admin');
+
+    document.getElementById('user-status-box').innerHTML =
+      `وضعیت: <strong style="color:#16a34a;">مدیر سیستم (${profile.display_name || profile.username})</strong>`;
+
+    document.getElementById('auth-action-btn').innerText =
+      '🚪 خروج از حالت ادمین';
+
+    closeLoginModal();
+    renderTable();
+
+    alert(`خوش آمدید ${profile.display_name || profile.username}`);
+
+  } catch (err) {
+    console.error('LOGIN ERROR:', err);
+    alert(err.message || 'ورود ناموفق بود.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'ورود';
+  }
 }
 
 async function restoreSession() { const { data } = await sb.auth.getSession(); session = data.session; if (!session) { applyAuth(); return } const { data: p } = await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id', session.user.id).maybeSingle(); if (p && p.active !== false) { profile = p; applyAuth(); trackPresence() } else { await sb.auth.signOut(); session = null; profile = null; applyAuth() } }
