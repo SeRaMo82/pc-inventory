@@ -19,77 +19,24 @@ function closeLoginModal() { document.getElementById('login-modal').classList.ad
 
 async function handleAdminLogin(e) {
   e.preventDefault();
-
   const btn = document.getElementById('login-btn');
-  const username = document
-    .getElementById('admin-username-input')
-    .value
-    .trim()
-    .toLowerCase();
-
-  const password = document
-    .getElementById('admin-pass-input')
-    .value;
-
+  const username = document.getElementById('admin-username-input').value.trim().toLowerCase();
+  const password = document.getElementById('admin-pass-input').value;
   btn.disabled = true;
   btn.textContent = 'در حال ورود...';
-
   try {
-    const { data: loginEmail, error: lookupError } =
-      await _supabase.rpc('get_login_email', {
-        p_username: username
-      });
-
-    if (lookupError) {
-      console.error('خطای دریافت ایمیل:', lookupError);
-      throw new Error('خطا در ارتباط با سامانه ورود');
-    }
-
-    if (!loginEmail) {
-      throw new Error('نام کاربری پیدا نشد');
-    }
-
-    const { data, error } =
-      await _supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: password
-      });
-
-    if (error) {
-      console.error('خطای ورود:', error);
-      throw new Error('نام کاربری یا رمز عبور نادرست است');
-    }
-
-    const { data: profile, error: profileError } =
-      await _supabase
-        .from('profiles')
-        .select('id,username,display_name,permissions,active,login_email')
-        .eq('id', data.user.id)
-        .single();
-
-    if (profileError || !profile || !profile.active) {
-      await _supabase.auth.signOut();
-      throw new Error('حساب مدیر معتبر نیست');
-    }
-
-    isAdmin = true;
-
-    document.body.classList.add('is-admin');
-
-    document.getElementById('user-status-box').innerHTML =
-      `وضعیت: <strong style="color:#16a34a;">مدیر سیستم (${profile.display_name || profile.username})</strong>`;
-
-    document.getElementById('auth-action-btn').innerText =
-      '🚪 خروج از حالت ادمین';
-
+    const { data: loginEmail, error: lookupError } = await sb.rpc('get_login_email', { p_username: username });
+    if (lookupError) { console.error('خطای دریافت ایمیل:', lookupError); throw new Error('خطا در ارتباط با سامانه ورود') }
+    if (!loginEmail) throw new Error('نام کاربری یا رمز عبور نادرست است');
+    const { error } = await sb.auth.signInWithPassword({ email: loginEmail, password });
+    if (error) { console.error('خطای ورود:', error); throw new Error('نام کاربری یا رمز عبور نادرست است') }
+    // sb.auth.onAuthStateChange (already wired below) picks up the new session,
+    // fetches the profile, and calls applyAuth()/trackPresence() — no need to duplicate that here.
     closeLoginModal();
-    renderTable();
-
-    alert(`خوش آمدید ${profile.display_name || profile.username}`);
-
+    toast('ورود موفق بود.', 'success');
   } catch (err) {
     console.error('LOGIN ERROR:', err);
-    alert(err.message || 'ورود ناموفق بود.');
+    toast(err.message || 'ورود ناموفق بود.', 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = 'ورود';
@@ -97,7 +44,7 @@ async function handleAdminLogin(e) {
 }
 
 async function restoreSession() { const { data } = await sb.auth.getSession(); session = data.session; if (!session) { applyAuth(); return } const { data: p } = await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id', session.user.id).maybeSingle(); if (p && p.active !== false) { profile = p; applyAuth(); trackPresence() } else { await sb.auth.signOut(); session = null; profile = null; applyAuth() } }
-sb.auth.onAuthStateChange(async (_event, s) => { session = s; if (!s) { profile = null; applyAuth(); } else if (!profile) { const { data: p } = await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id', s.user.id).maybeSingle(); profile = p; applyAuth(); trackPresence() } });
+sb.auth.onAuthStateChange(async (_event, s) => { session = s; if (!s) { profile = null; applyAuth(); } else if (!profile) { const { data: p } = await sb.from('profiles').select('id,username,display_name,permissions,active,login_email').eq('id', s.user.id).maybeSingle(); if (!p || p.active === false) { await sb.auth.signOut(); session = null; profile = null; applyAuth(); toast('این حساب مدیر غیرفعال شده است.', 'error'); return } profile = p; applyAuth(); trackPresence() } });
 function has(perm) { return !!profile?.permissions?.[perm] }
 function applyAuth() { const logged = !!session && !!profile; document.body.classList.toggle('is-admin', logged); document.getElementById('admin-toolbar').classList.toggle('hidden', !logged); document.getElementById('user-status-box').textContent = logged ? `${profile.display_name || profile.username} · مدیر` : 'کاربر عمومی · فقط مشاهده'; document.getElementById('auth-action-btn').textContent = logged ? '🚪 خروج از پنل' : '🔐 ورود به پنل'; renderTable() }
 async function signOut() { if (presenceChannel) { await sb.removeChannel(presenceChannel); presenceChannel = null } await sb.auth.signOut(); session = null; profile = null; applyAuth(); toast('از پنل مدیریت خارج شدید.') }
